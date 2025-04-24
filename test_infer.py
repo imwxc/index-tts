@@ -122,7 +122,8 @@ if __name__ == "__main__":
     prompt_wav_path = "/Users/wangxianchen/Desktop/tts_reference/upload_references"
 
     prompt_id_list = [
-        "ks_曾鼎全",
+        # "ks_曾鼎全",
+        "qianqiuhao_clone",
         # "QY13323323_清盐",
         # "柴柴_男声",
         # "是阿殇啦",
@@ -133,7 +134,8 @@ if __name__ == "__main__":
 
     prompt_file_name = "sample1.mp3"
     # # text="晕 XUAN4 是 一 种 GAN3 觉"
-    text = "各位老铁们，欢迎新进直播间的老铁们！库存真的不多了，咱们1号、2号链接赶紧拍起来！1号链接的炸鸡三兄弟配送，性价比超高，绝对值得您拥有！无论是和朋友一起分享，还是犒劳自己，都值得您拥有！而2号2号链接则更加实惠，让您省钱又省心！炸鸡三兄弟配送，价格超低，绝对值得您拥有！不管是屯个三单，五单分开用，还是一起用，都是可以的！赶紧拍，赶紧屯，让您的味蕾享受美味的同时，也能省下一大笔钱！"
+    # text = "各位老铁们，欢迎新进直播间的老铁们！库存真的不多了，咱们1号、2号链接赶紧拍起来！1号链接的炸鸡三兄弟配送，性价比超高，绝对值得您拥有！无论是和朋友一起分享，还是犒劳自己，都值得您拥有！而2号2号链接则更加实惠，让您省钱又省心！炸鸡三兄弟配送，价格超低，绝对值得您拥有！不管是屯个三单，五单分开用，还是一起用，都是可以的！赶紧拍，赶紧屯，让您的味蕾享受美味的同时，也能省下一大笔钱！"
+    text = "大家听好了，今天咱们这波活动。一整年也就一次两次，不会超过三次。您不可天天让官方亏钱是不是，抓紧时间去囤一波了。宝贝们，这是咱们官方联合快手平台，为了迎接咱们接下来的一些节日，才能够给到大家的一个福利价格。是补贴之后才能够做到的一个冰点价格地板价格。那错过了这次机会呢，就真的只能等到明年了啊。这波羊毛咱们拍到就是赚到。抓紧时间拼手速，拼网速了。能拍五单，不拍三单。拍多了囤多了可以退，拍少了囤少了，没有优惠，后悔一整年哦。"
     # # text_2 = "来刘炭ZHANG3吃烤肉，肉质鲜嫩多汁，秘制酱料香到上头！炭火现烤滋滋冒油，人均50吃到扶墙走！吃货们快约上姐妹冲，大口吃肉才叫爽！"
 
     tts = IndexTTS(
@@ -145,18 +147,20 @@ if __name__ == "__main__":
         # device="cpu",
     )
 
+    # TODO: 多音频融合还没测通，流式生成的音频连接处非常诡异，web-api还没提供
+
     for script in random_scripts:
         for prompt_id in prompt_id_list:
             prompt_wav = prompt_wav_path + "/" + prompt_id + "/" + prompt_file_name
             print(prompt_wav)
 
-            tts.infer_real_stream(
-                audio_prompt=prompt_wav,
-                text=text,
-                output_path=f"./outputs/results/{prompt_id}/gen_{script[:2]}_{random.randint(1,200)}_text.wav",
-                verbose=True,
-                prompt_id=prompt_id,
-            )
+            # tts.infer_real_stream(
+            #     audio_prompt=prompt_wav,
+            #     text=text,
+            #     output_path=f"./outputs/results/{prompt_id}/gen_{script[:2]}_{random.randint(1,200)}_text.wav",
+            #     verbose=True,
+            #     prompt_id=prompt_id,
+            # )
 
             # tts.infer_stream(
             #     audio_prompt=prompt_wav,
@@ -170,7 +174,7 @@ if __name__ == "__main__":
 
             tts.infer_fast(
                 audio_prompt=prompt_wav,
-                text=script,
+                text=text,
                 output_path=f"./outputs/results/{prompt_id}/gen_{script[:2]}_{random.randint(1,200)}_text.wav",
                 verbose=False,
                 prompt_id=prompt_id,
