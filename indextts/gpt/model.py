@@ -494,7 +494,7 @@ class UnifiedVoice(nn.Module):
             self.ds_engine = deepspeed.init_inference(
                 model=self.inference_model,
                 mp_size=1,
-                replace_with_kernel_inject=False,
+                replace_with_kernel_inject=True,
                 dtype=torch.float16,
             )
             self.inference_model = self.ds_engine.module.eval()
@@ -504,7 +504,7 @@ class UnifiedVoice(nn.Module):
             self.ds_engine = deepspeed.init_inference(
                 model=self.inference_model,
                 mp_size=1,
-                replace_with_kernel_inject=False,
+                replace_with_kernel_inject=True,
                 dtype=torch.float32,
             )
             self.inference_model = self.ds_engine.module.eval()
@@ -899,7 +899,6 @@ class UnifiedVoice(nn.Module):
             else trunc_index + max_generate_length
         )
 
-
         gen = self.inference_model.generate(
             inputs,
             bos_token_id=self.start_mel_token,
@@ -1018,7 +1017,7 @@ class UnifiedVoice(nn.Module):
         else:
             # 默认值
             current_dtype = torch.float32
-        
+
         final_result = None
 
         # 使用闭包创建生成函数，捕获当前的 autocast 状态
@@ -1065,7 +1064,7 @@ class UnifiedVoice(nn.Module):
                     # final_result = gen_result[:, trunc_index:]
                     # print(f"final_result.shape: {final_result.shape}")
                     # print(final_result)
-                    
+
             return generate_function
 
         # 创建生成函数
