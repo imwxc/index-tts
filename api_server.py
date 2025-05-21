@@ -77,25 +77,35 @@ results = {}
 class ModelManager:
     _instance = None
     _lock = threading.Lock()
+    _initialized = False  # 添加初始化标志
 
     @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
+    def initialize(cls):
+        """显式初始化模型"""
+        if not cls._initialized:
             with cls._lock:
-                if cls._instance is None:
+                if not cls._initialized:
                     logger.info("初始化IndexTTS模型...")
                     
                     # 获取环境变量配置
-                    compile_mode = os.environ.get("TTS_COMPILE", "1") == "1"
+                    # compile_mode = os.environ.get("TTS_COMPILE", "1") == "1"
+                    compile_mode = False
                     fp16_mode = os.environ.get("TTS_FP16", "1") == "1"
                     
                     cls._instance = IndexTTS(
                         model_dir=MODEL_DIR,
-                        device="cuda" if torch.cuda.is_available() else "cpu",
+                        device="cuda:0" if torch.cuda.is_available() else "cpu",
                         compile=compile_mode and torch.cuda.is_available(),
                         is_fp16=fp16_mode and torch.cuda.is_available()
                     )
+                    cls._initialized = True
                     logger.info("IndexTTS模型初始化完成")
+
+    @classmethod
+    def get_instance(cls):
+        """获取或初始化模型实例"""
+        if cls._instance is None:
+            cls.initialize()
         return cls._instance
 
 def initialize_reference_folder():
@@ -271,6 +281,15 @@ async def process_upload_task(task_id: str, text: str, audio_file_path: str,
         except Exception as e:
             logger.warning(f"删除临时文件失败: {str(e)}")
 
+# 在应用启动时预加载模型
+@app.on_event("startup")
+async def startup_event():
+    """在应用启动时预加载模型"""
+    logger.info("服务启动，预加载模型...")
+    # 显式初始化模型，确保在首次请求前已加载完成
+    ModelManager.initialize()
+    logger.info("模型加载完成")
+
 # 启动工作线程
 initialize_reference_folder()
 threading.Thread(target=worker, daemon=True).start()
@@ -295,7 +314,7 @@ async def generate_tts(request: TTSRequest, background_tasks: BackgroundTasks):
         logger.info(f"任务 {task_id} 添加到队列")
         
         # 等待任务完成，设置超时为60秒
-        timeout = 120  # 超时时间（秒）
+        timeout = 60  # 超时时间（秒）
         max_iterations = int(timeout / 0.1)  # 每0.1秒检查一次
         
         for _ in range(max_iterations):  
@@ -313,7 +332,7 @@ async def generate_tts(request: TTSRequest, background_tasks: BackgroundTasks):
             # 等待100毫秒
             await asyncio.sleep(0.1)
         
-        raise HTTPException(status_code=408, detail="处理超时 (60秒)")
+        raise HTTPException(status_code=408, detail=f"处理超时 ({timeout}秒)")
     
     except queue.Full:
         raise HTTPException(status_code=503, detail="服务器队列已满，请稍后再试")

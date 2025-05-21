@@ -512,6 +512,52 @@ class IndexTTS:
 
         return all_text_tokens, all_sentences
 
+    # 在 IndexTTS 类中添加这个新方法
+    def optimize_chunk_size(self, latent_length, verbose=False):
+        """
+        根据GPU显存和延迟要求动态选择最佳chunk_size
+        
+        Args:
+            latent_length: 潜在表示的长度
+            verbose: 是否打印详细信息
+        
+        Returns:
+            int: 优化后的chunk_size
+        """
+        # 基本大小为2，避免太小导致过多开销
+        default_size = 2
+        
+        if torch.cuda.is_available():
+            try:
+                # 获取可用GPU显存
+                free_memory = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()
+                free_gb = free_memory / (1024**3)
+                
+                # 根据可用显存动态调整chunk_size
+                if free_gb > 12:  # 大显存
+                    optimal_size = min(8, latent_length)
+                elif free_gb > 6:  # 中等显存
+                    optimal_size = min(4, latent_length)
+                elif free_gb > 3:  # 较小显存
+                    optimal_size = min(3, latent_length)
+                else:  # 保守设置
+                    optimal_size = default_size
+                    
+                if verbose:
+                    print(f"可用GPU显存: {free_gb:.2f}GB, 选择chunk_size: {optimal_size}")
+                    
+                return optimal_size
+            except Exception as e:
+                if verbose:
+                    print(f"优化chunk_size时出错: {e}, 使用默认值: {default_size}")
+                return default_size
+        elif hasattr(torch, 'mps') and torch.mps.is_available():
+            # MPS (Mac Metal)设备通常资源有限
+            return min(2, latent_length)
+        else:
+            # CPU模式，使用较小值避免内存问题
+            return min(default_size, latent_length)
+
     # 快速推理：对于“多句长文本”，可实现至少 2~10 倍以上的速度提升~ （First modified by sunnyboxs 2025-04-16）
     def infer_fast(
         self,
@@ -751,45 +797,91 @@ class IndexTTS:
             tqdm_progress.update(1)
             wav = torch.clamp(32767 * wav, -32767.0, 32767.0)
             wavs = [wav]  # 使用单个波形而不是多个
+        # 替换 infer_fast 方法中的 else 分支(no_chunk=False)部分
         else:
-            chunk_size = 2
+            # 动态优化 chunk_size
+            chunk_size = self.optimize_chunk_size(len(all_latents), verbose)
+            print(f"使用优化的 chunk_size: {chunk_size}")
+            
+            # 创建分块
             chunk_latents = [
                 all_latents[i : i + chunk_size] for i in range(0, len(all_latents), chunk_size)
             ]
             chunk_length = len(chunk_latents)
             latent_length = len(all_latents)
+            
+            # 释放原始数据以节省内存
             all_latents = None
-            for items in chunk_latents:
+            self.torch_empty_cache()
+            
+            # 批处理记录
+            processed_items = 0
+            
+            for chunk_idx, items in enumerate(chunk_latents):
+                # 更新进度
                 tqdm_progress.update(len(items))
+                processed_items += len(items)
+                if verbose:
+                    print(f"处理块 {chunk_idx+1}/{chunk_length}, 项目: {len(items)}/{latent_length}")
+                
+                # 合并当前块的latents
                 latent = torch.cat(items, dim=1)
+                
                 with torch.no_grad():
                     with torch.amp.autocast(
                         self.device, enabled=self.dtype is not None, dtype=self.dtype
                     ):
-                        # 在调用optimized_forward前添加此行
+                        # CUDA图形优化
                         if "cuda" in str(self.device) and self.compile:
                             torch.compiler.cudagraph_mark_step_begin()
 
+                        # 计时并执行BigVGAN
                         m_start_time = time.perf_counter()
+                        
+                        # 选择合适的前向传播函数
                         bigvgan_forward_fn = (
                             self.bigvgan.compile_forward
-                            if self.compile
+                            if hasattr(self.bigvgan, 'compile_forward') and self.compile
                             else self.bigvgan.forward
                         )
+                        
+                        # 准备参考梅尔谱图
                         mel_ref = auto_conditioning.transpose(1, 2)
                         if verbose:
-                            print(
-                                f"latent shape: {latent.shape}, mel_ref shape: {mel_ref.shape}"
-                            )
+                            print(f"latent shape: {latent.shape}, mel_ref shape: {mel_ref.shape}")
+                        
+                        # 执行BigVGAN推理
                         wav, _ = bigvgan_forward_fn(latent, mel_ref)
+                        
+                        # 在CUDA环境下使用clone减少内存碎片
                         if "cuda" in str(self.device) and self.compile:
                             wav = wav.clone()
 
-                        bigvgan_time += time.perf_counter() - m_start_time
+                        # 记录BigVGAN处理时间
+                        chunk_time = time.perf_counter() - m_start_time
+                        bigvgan_time += chunk_time
+                        
+                        if verbose:
+                            # 计算每句话的平均处理时间
+                            avg_time = chunk_time / len(items)
+                            print(f"块 {chunk_idx+1} 处理时间: {chunk_time:.3f}秒, 每句平均: {avg_time:.3f}秒")
+                        
+                        # 处理波形
                         wav = wav.squeeze(1)
-                        pass
+                        
+                        # 立即将数据转移到CPU，减少GPU内存使用
+                        wav = wav.cpu()
+                
+                # 将波形值裁剪到有效范围
                 wav = torch.clamp(32767 * wav, -32767.0, 32767.0)
                 wavs.append(wav)
+                
+                # 阶段性清理缓存
+                if chunk_idx % 3 == 2:  # 每处理3块清理一次
+                    self.torch_empty_cache()
+                    
+            # 打印处理统计信息
+            print(f"BigVGAN处理完成: {chunk_length}个块, 共{latent_length}个项目, 耗时: {bigvgan_time:.2f}秒")
 
         # clear cache
         tqdm_progress.close()  # 确保进度条被关闭
