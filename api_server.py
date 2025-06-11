@@ -101,7 +101,7 @@ class ModelManager:
 
                     cls._instance = IndexTTS(
                         model_dir=MODEL_DIR,
-                        device="cuda:0" if torch.cuda.is_available() else "cpu",
+                        device="cpu",
                         compile=compile_mode and torch.cuda.is_available(),
                         is_fp16=fp16_mode and torch.cuda.is_available()
                     )
