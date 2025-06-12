@@ -26,6 +26,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("index-tts-api")
 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 # 定义请求模型
 
 
@@ -191,6 +193,7 @@ def worker():
                         buffer_size=25
                     )
                 else:
+                    logger.info("开始推理......")
                     # 非流式合成 - 按照实际参数列表调整
                     tts.infer_fast(
                         audio_prompt=audio_prompts,
@@ -206,6 +209,8 @@ def worker():
                 # 计算音频时长
                 info = torchaudio.info(output_path)
                 duration = info.num_frames / info.sample_rate
+
+                logger.info("处理结果......")
 
                 # 存储结果
                 results[task_id] = {
@@ -255,6 +260,8 @@ async def process_upload_task(task_id: str, text: str, audio_file_path: str,
         except:
             logger.warning("无法设置temperature或top_p属性，这些参数可能不会生效")
 
+        logger.info("开始推理......")
+
         # 调用推理
         tts.infer_fast(
             audio_prompt=audio_prompts,
@@ -266,6 +273,8 @@ async def process_upload_task(task_id: str, text: str, audio_file_path: str,
             weights=None,
             no_chunk=no_chunk
         )
+
+        logger.info("处理结果......")
 
         # 计算音频时长
         info = torchaudio.info(output_path)
