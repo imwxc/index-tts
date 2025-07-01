@@ -84,10 +84,13 @@ async def lifespan(app: FastAPI):
     fp16_mode = os.environ.get("TTS_FP16", "1") == "1"
     gpu_memory_utilization = float(os.environ.get("TTS_GPU_MEMORY_UTIL", "0.5"))
 
+    device = "cpu"
+
     # 初始化模型
     tts = IndexTTS(
         model_dir=MODEL_DIR,
-        device="cuda:0" if torch.cuda.is_available() else "cpu",
+        # device="cuda:0" if torch.cuda.is_available() else "cpu",
+        device=device,  # 使用CPU设备
         compile=compile_mode and torch.cuda.is_available(),
         is_fp16=fp16_mode and torch.cuda.is_available()
     )
