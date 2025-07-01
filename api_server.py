@@ -5,7 +5,7 @@ import torchaudio
 import time
 import asyncio
 from typing import List, Optional, Dict, Any, Union
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -220,116 +220,6 @@ async def generate_tts(request: TTSRequest):
         logger.error(f"任务 {task_id} 失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/v1/upload_audio")
-async def upload_audio_for_tts(
-        text: str = Form(...),
-        audio: UploadFile = File(...),
-        temperature: float = Form(1.0),
-        top_p: float = Form(0.8),
-        fusion_method: str = Form("average"),
-        no_chunk: bool = Form(False)
-):
-    """处理上传的音频文件生成TTS"""
-    task_id = str(uuid.uuid4())
-
-    # 保存上传的音频文件到临时目录
-    audio_file_path = os.path.join(TEMP_DIR, f"{task_id}_{audio.filename}")
-
-    try:
-        # 写入文件
-        with open(audio_file_path, "wb") as buffer:
-            shutil.copyfileobj(audio.file, buffer)
-
-        # 准备输出路径
-        output_path = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
-
-        # 调用推理
-        start_time = time.time()
-
-        # 获取全局TTS模型
-        global tts
-        if tts is None:
-            raise HTTPException(status_code=500, detail="TTS模型未初始化")
-
-        # 设置模型参数
-        try:
-            tts.temperature = temperature
-            tts.top_p = top_p
-        except Exception as e:
-            logger.warning(f"无法设置temperature或top_p属性: {e}")
-
-        # 在单独的线程中运行TTS推理
-        await asyncio.to_thread(
-            tts.infer_fast,
-            audio_prompt=[audio_file_path],
-            text=text,
-            output_path=output_path,
-            verbose=False,
-            prompt_id="uploaded_audio",
-            fusion_method=fusion_method,
-            weights=None,
-            no_chunk=no_chunk
-        )
-
-        # 计算音频时长
-        info = torchaudio.info(output_path)
-        duration = info.num_frames / info.sample_rate
-
-        logger.info(f"上传任务 {task_id} 完成，耗时 {time.time() - start_time:.2f}秒")
-
-        # 返回结果
-        return {
-            "id": task_id,
-            "audio_url": f"/v1/audio/{task_id}",
-            "duration": duration,
-            "text": text,
-            "sampling_rate": info.sample_rate
-        }
-
-    except Exception as e:
-        logger.error(f"上传任务 {task_id} 失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        # 清理临时文件
-        try:
-            if os.path.exists(audio_file_path):
-                os.remove(audio_file_path)
-                logger.debug(f"临时文件已删除: {audio_file_path}")
-        except Exception as e:
-            logger.warning(f"删除临时文件失败: {str(e)}")
-
-@app.get("/v1/audio/{audio_id}")
-async def get_audio(audio_id: str):
-    """获取生成的音频文件"""
-    file_path = os.path.join(OUTPUT_DIR, f"{audio_id}.wav")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="音频文件不存在")
-
-    return FileResponse(
-        file_path,
-        media_type="audio/wav",
-        filename=f"{audio_id}.wav"
-    )
-
-@app.post("/v1/tts_audio")
-async def generate_and_return_tts_audio(request: TTSRequest):
-    """生成文本到语音并直接返回音频文件"""
-    # 使用相同的generate_tts函数进行处理
-    response = await generate_tts(request)
-    task_id = response["id"]
-
-    # 直接返回音频文件
-    file_path = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="音频文件不存在")
-
-    return FileResponse(
-        file_path,
-        media_type="audio/wav",
-        filename=f"{task_id}.wav"
-    )
-
 @app.get("/v1/references")
 async def list_references():
     """列出所有可用的参考音频ID"""
@@ -356,12 +246,6 @@ async def list_references():
         return {"references": references}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取参考音频列表失败: {str(e)}")
-
-@app.post("/v1/tts_stream")
-async def stream_tts(request: TTSRequest):
-    """流式TTS合成"""
-    request.stream = True
-    return await generate_tts(request)
 
 if __name__ == "__main__":
     port = int(os.environ.get("SERVICE_PORT", 8000))
