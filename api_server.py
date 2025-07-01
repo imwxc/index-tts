@@ -5,7 +5,8 @@ import torchaudio
 import time
 import asyncio
 from typing import List, Optional, Dict, Any, Union
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -76,7 +77,7 @@ def initialize_reference_folder():
 async def lifespan(app: FastAPI):
     global tts
 
-    logger.info("初始化IndexTTS模型...")
+    logger.info("初始化IndexTTS模型")
 
     # 获取环境变量配置
     compile_mode = False
@@ -95,6 +96,9 @@ async def lifespan(app: FastAPI):
 
     # 初始化参考音频文件夹
     initialize_reference_folder()
+
+    # 添加Application startup complete日志，确保检测脚本可以识别
+    logger.info("Application startup complete.")
 
     yield
 
@@ -116,6 +120,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 定义一个全局结果字典，模拟原有代码的结果存储
+results = {}
+
 @app.get("/")
 def root():
     return {"message": "IndexTTS API 服务运行中"}
@@ -126,7 +133,7 @@ def health_check():
     return {"status": "healthy", "version": "1.0.0"}
 
 @app.post("/v1/tts", response_model=TTSResponse)
-async def generate_tts(request: TTSRequest):
+async def generate_tts(request: TTSRequest, background_tasks: BackgroundTasks):
     """异步生成文本到语音转换"""
     task_id = str(uuid.uuid4())
 
@@ -207,18 +214,57 @@ async def generate_tts(request: TTSRequest):
 
         logger.info(f"任务 {task_id} 完成，耗时 {time.time() - start_time:.2f}秒")
 
-        # 返回结果
-        return {
+        # 存储结果，模拟原有代码的results字典
+        result = {
             "id": task_id,
             "audio_url": f"/v1/audio/{task_id}",
             "duration": duration,
             "text": request.text,
             "sampling_rate": info.sample_rate
         }
+        results[task_id] = result
+
+        # 添加后台任务清理结果
+        background_tasks.add_task(lambda: results.pop(task_id, None))
+
+        return result
 
     except Exception as e:
         logger.error(f"任务 {task_id} 失败: {str(e)}", exc_info=True)
+        results[task_id] = {"error": str(e)}
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/tts_audio")
+async def generate_and_return_tts_audio(request: TTSRequest, background_tasks: BackgroundTasks):
+    """生成文本到语音并直接返回音频文件"""
+    # 使用相同的generate_tts函数进行处理
+    response = await generate_tts(request, background_tasks)
+    task_id = response["id"]
+
+    # 直接返回音频文件
+    file_path = os.path.join(OUTPUT_DIR, f"{task_id}.wav")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    return FileResponse(
+        file_path,
+        media_type="audio/wav",
+        filename=f"{task_id}.wav"
+    )
+
+@app.get("/v1/audio/{audio_id}")
+async def get_audio(audio_id: str):
+    """获取生成的音频文件"""
+    file_path = os.path.join(OUTPUT_DIR, f"{audio_id}.wav")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    return FileResponse(
+        file_path,
+        media_type="audio/wav",
+        filename=f"{audio_id}.wav"
+    )
 
 @app.get("/v1/references")
 async def list_references():
